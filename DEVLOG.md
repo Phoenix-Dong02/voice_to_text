@@ -51,8 +51,12 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
 - [x] GitHub repo created, push/pull working
 - [x] Spring Boot project skeleton generated (Maven, Spring Web + HTTP Client)
 - [x] App starts successfully (via package + java -jar); `localhost:8080` shows Whitelabel Error Page (expected — no Controller written yet)
-- [ ] Write first test `@RestController` (`HelloController`, GET `/api/v1/hello`) — **in progress, next step**
+- [x] Write first test `@RestController` (`HelloController`, GET `/api/v1/hello`) — **in progress, next step**
 - [ ] Frontend: record button + MediaRecorder + stop button
+  - [x] `index.html` created under `static/`, with recordBtn / status / result elements
+  - [x] `getUserMedia()` wired up: clicking start requests mic permission, status updates to "recording", confirmed working in browser (mic icon shows in address bar, MediaStream logged to console)
+  - [ ] Create `MediaRecorder` from the stream to actually capture audio
+  - [ ] Add stop button + stop logic (stop recording, release mic, package audio data)
 - [ ] Backend: endpoint to receive uploaded audio
 - [ ] Backend: call OpenAI `/v1/audio/transcriptions` (API key from `OPENAI_API_KEY` env var — must never leak to frontend/logs)
 - [ ] Frontend: display transcription result, auto-reset for next recording
@@ -75,4 +79,4 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
 
 ---
 
-*Last updated: 2026-08-20*
+*Last updated: 2026-08-26*

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Voice to Text</title>
+</head>
+<body>
+
+	<button id = "recordBtn">start</button>
+
+	<p id = "status">wait</p>
+
+	<div id = "result"></div>
+
+    <script>
+		const recordBtn = document.getElementById("recordBtn");
+		const status = document.getElementById("status");
+		const result = document.getElementById("result");
+		
+
+		async function startRecording() {
+		    try {
+		        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+				status.textContent = "recording"
+		        console.log("get the permission of audio successfully:", stream);
+		    } catch (error) {
+		        
+		        console.error("fail to get the permission of audio:", error);
+		    }
+		}
+		recordBtn.addEventListener("click", startRecording);
+    </script>
+
+</body>
+</html>
