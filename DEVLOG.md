@@ -1,7 +1,6 @@
 # DEVLOG — voice_to_text (COMP3011 Assignment 1)
 
-Purpose: track key progress, issues encountered, and current status. Paste this file into a new chat with Claude to quickly resume context.
-
+Purpose: track key progress, issues encountered, and current status.
 ---
 
 ## Project Info
@@ -51,12 +50,21 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
 - [x] GitHub repo created, push/pull working
 - [x] Spring Boot project skeleton generated (Maven, Spring Web + HTTP Client)
 - [x] App starts successfully (via package + java -jar); `localhost:8080` shows Whitelabel Error Page (expected — no Controller written yet)
-- [x] Write first test `@RestController` (`HelloController`, GET `/api/v1/hello`) — **in progress, next step**
-- [ ] Frontend: record button + MediaRecorder + stop button
+- [x] Write first test `@RestController` (`HelloController`, GET `/api/v1/hello`)
+- [x] Frontend: record button + MediaRecorder + stop button
   - [x] `index.html` created under `static/`, with recordBtn / status / result elements
   - [x] `getUserMedia()` wired up: clicking start requests mic permission, status updates to "recording", confirmed working in browser (mic icon shows in address bar, MediaStream logged to console)
-  - [ ] Create `MediaRecorder` from the stream to actually capture audio
-  - [ ] Add stop button + stop logic (stop recording, release mic, package audio data)
+  - [x] Create `MediaRecorder` from the stream to actually capture audio
+  - [x] Add stop button + stop logic (stop recording, release mic, package audio data)
+    - Used `mediaRecorder.start(1000)` (with timeslice) rather than `start()` with no
+      argument, so `dataavailable` fires periodically and `audioChunks` genuinely
+      accumulates multiple Blob fragments before being merged — not just a single
+      fragment at stop time
+    - Bug encountered + fixed: wrote `stream.getTracks.forEach(...)` (missing `()`
+      after `getTracks`), which threw `TypeError: ... forEach is not a function`
+      because `getTracks` without invocation returns the method itself, not the
+      array. Diagnosed using `debugger;` statement to pause execution and inspect
+      `stream` at the exact failure point, rather than guessing from stale console output
 - [ ] Backend: endpoint to receive uploaded audio
 - [ ] Backend: call OpenAI `/v1/audio/transcriptions` (API key from `OPENAI_API_KEY` env var — must never leak to frontend/logs)
 - [ ] Frontend: display transcription result, auto-reset for next recording
@@ -64,6 +72,10 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
 - [ ] Concurrency testing: must handle 200+ concurrent requests
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
+
+**Immediate next step**: Package the `finalRecording` Blob into a `FormData` object
+and send it to the Spring Boot backend via `fetch()`; backend needs a controller
+endpoint to receive the uploaded audio file.
 
 ---
 
@@ -79,4 +91,4 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
 
 ---
 
-*Last updated: 2026-08-26*
+*Last updated: 2026-08-31*

@@ -16,19 +16,58 @@
 		const recordBtn = document.getElementById("recordBtn");
 		const status = document.getElementById("status");
 		const result = document.getElementById("result");
+
 		
+		let mediaRecorder
+		let audioChunks
+		let stream
+		
+		function addDataChunk(e){
+			audioChunks.push(e.data);
+		}
+		
+		function finalizeRecording(){
+			const finalRecording = new Blob(audioChunks, {type: "audio/webm"});
+			console.log(finalRecording);
+			console.log("stream is:", stream);
+			stream.getTracks().forEach(track => track.stop());
+			}
 
 		async function startRecording() {
 		    try {
-		        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-				status.textContent = "recording"
-		        console.log("get the permission of audio successfully:", stream);
+		        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+				mediaRecorder = new MediaRecorder(stream, {mimeType: "audio/webm"});
+				audioChunks = [];
+
+				mediaRecorder.addEventListener("dataavailable", addDataChunk);				
+				mediaRecorder.addEventListener("stop", finalizeRecording);
+				mediaRecorder.start(1000);
+				
+
+		        status.textContent = "recording";
+		        recordBtn.textContent = "end";
+		        console.log("recording started");
 		    } catch (error) {
-		        
 		        console.error("fail to get the permission of audio:", error);
 		    }
 		}
-		recordBtn.addEventListener("click", startRecording);
+
+		function stopRecording() {
+			mediaRecorder.stop();
+		    status.textContent = "stopped";
+		    recordBtn.textContent = "start";
+		    console.log("recording stopped");
+		}
+
+		recordBtn.addEventListener("click", () => {
+		    if (recordBtn.textContent === "start"){
+				startRecording();
+			} else{
+				stopRecording();
+			}
+			
+		});
     </script>
 
 </body>
