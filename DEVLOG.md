@@ -65,17 +65,27 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
       because `getTracks` without invocation returns the method itself, not the
       array. Diagnosed using `debugger;` statement to pause execution and inspect
       `stream` at the exact failure point, rather than guessing from stale console output
+  - [x] Package `finalRecording` Blob into `FormData`, upload via `fetch()` to
+    `/api/v1/transcribe`, parse JSON response and display `text` field in `result` div
+    - Field name `"audio"` chosen for the FormData key; backend Controller must
+      use matching `@RequestParam("audio")` to bind correctly
+    - `finalizeRecording` marked `async` so it can `await uploadRecording(...)`,
+      ensuring mic release happens before upload starts, and the function doesn't
+      return until upload + transcription display fully completes
+- [x] Frontend: display transcription result in `result` div
+- [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
+  the next recording without a manual refresh
 - [ ] Backend: endpoint to receive uploaded audio
 - [ ] Backend: call OpenAI `/v1/audio/transcriptions` (API key from `OPENAI_API_KEY` env var — must never leak to frontend/logs)
-- [ ] Frontend: display transcription result, auto-reset for next recording
 - [ ] Additional endpoints specified in the assignment YAML (uptime, runtime stats, graceful shutdown) — need to locate and read that YAML spec
 - [ ] Concurrency testing: must handle 200+ concurrent requests
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
 
-**Immediate next step**: Package the `finalRecording` Blob into a `FormData` object
-and send it to the Spring Boot backend via `fetch()`; backend needs a controller
-endpoint to receive the uploaded audio file.
+**Immediate next step**: Write a Spring Boot `@RestController` with a
+`@PostMapping("/api/v1/transcribe")` endpoint that accepts a `MultipartFile`
+(bound via `@RequestParam("audio")`) — this is currently missing, so the
+frontend's fetch call will fail until this exists.
 
 ---
 
@@ -91,4 +101,4 @@ endpoint to receive the uploaded audio file.
 
 ---
 
-*Last updated: 2026-08-31*
+*Last updated: 2026-09-02*

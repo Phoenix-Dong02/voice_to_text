@@ -26,11 +26,42 @@
 			audioChunks.push(e.data);
 		}
 		
-		function finalizeRecording(){
+		async function finalizeRecording(){
 			const finalRecording = new Blob(audioChunks, {type: "audio/webm"});
 			console.log(finalRecording);
 			console.log("stream is:", stream);
+			// stream and mediaRecorder are two different things
+			// stop mediaRecorder but stream is still active
 			stream.getTracks().forEach(track => track.stop());
+			// adding await makes sure finalizeRecording finishes after uploading Recording
+			await uploadRecording(finalRecording);
+			}
+			
+			
+		async function uploadRecording(blob) {
+			  
+			  const formData = new FormData();
+			  formData.append("audio", blob, "recording.webm");
+			  
+
+			  try {
+			    
+				const response = await fetch("/api/v1/transcribe",{
+					method: "POST",
+					// here, i don't need to write header and boundary
+					// because the browser will add these things autimatically when it detects formData type
+					body: formData
+				});
+
+			    // parsing the response body takes some time
+				// need to add await
+				const json = await response.json();
+
+				result.textContent = json["text"];
+
+			  } catch (error) {
+			    console.error("an error happens in uploading or rewriting:", error);
+			  }
 			}
 
 		async function startRecording() {
@@ -42,7 +73,9 @@
 
 				mediaRecorder.addEventListener("dataavailable", addDataChunk);				
 				mediaRecorder.addEventListener("stop", finalizeRecording);
-				mediaRecorder.start(1000);
+				// dataavailable event happens every second and then push datachunk into datachunks each time
+				// instead of geeting a big blob when stopped
+				mediaRecorder.start(1000); 
 				
 
 		        status.textContent = "recording";
