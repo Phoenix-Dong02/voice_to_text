@@ -17,14 +17,24 @@ Purpose: track key progress, issues encountered, and current status.
 
 ---
 
+## AI Assistance Disclosure
+
+Development was supported by conversations with Claude (Anthropic) for
+concept explanation, code review, and Socratic-style debugging guidance
+(e.g. clarifying why MediaRecorder.stop() doesn't stop the underlying
+stream, reviewing FormData design tradeoffs). All code was written and
+debugged independently; Claude was used as a tutor, not as a code
+generator. See commit history for incremental, independent progress.
+
+---
+
 ## ⚠️ Known Issue: App fails to start via STS / mvnw
 
 **Symptom**: Running via STS Boot Dashboard, right-click Run As → Spring Boot App, `mvnw.cmd spring-boot:run`, or `mvn spring-boot:run` (standalone Maven) all fail with the same error:
 
-```
 NoClassDefFoundError: org/springframework/boot/SpringApplication
 Caused by: ClassNotFoundException: org.springframework.boot.SpringApplication
-```
+
 
 **Causes investigated and ruled out**:
 - ❌ Chinese username in the file path (moved to a plain-ASCII D: drive path — issue persisted)
@@ -73,11 +83,14 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
       ensuring mic release happens before upload starts, and the function doesn't
       return until upload + transcription display fully completes
 - [x] Frontend: display transcription result in `result` div
+- [x] Located assignment YAML spec + official grading rubric (course site, 2026-09-04)
 - [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
   the next recording without a manual refresh
 - [ ] Backend: endpoint to receive uploaded audio
 - [ ] Backend: call OpenAI `/v1/audio/transcriptions` (API key from `OPENAI_API_KEY` env var — must never leak to frontend/logs)
-- [ ] Additional endpoints specified in the assignment YAML (uptime, runtime stats, graceful shutdown) — need to locate and read that YAML spec
+- [ ] Backend: `GET /api/v1/admin/uptime` — return server start time, current time, uptime in seconds
+- [ ] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return 202, handle 409 if already shutting down
+- [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token counts since server start
 - [ ] Concurrency testing: must handle 200+ concurrent requests
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
@@ -98,7 +111,17 @@ frontend's fetch call will fail until this exists.
 - Use Spring profiles/environment variables to switch between local and TITAN configs — not commented-out code
 - Due Sunday, September 13; worth 20% of final grade; requires at least one TITAN hand-in plus a final GitHub link submission via Gradescope
 - Viva demonstration required — must be able to explain and defend every line of code written
+- Transcription model must be `gpt-4o-mini-transcribe` (not just "any" OpenAI STT model)
+- For recordings under 1 minute, transcription result must display within 5 seconds of stopping
+- **Concurrency is graded as its own 30/100-point rubric category (equal weight to backend correctness)**:
+  must handle 200+ concurrent blocking HTTP requests within a single Java process without
+  significant delay or crashing. This is not a stretch goal — it must be planned for before
+  the transcribe endpoint is finalized, not tested as an afterthought.
+- Grading rubric breakdown (for reference): REST API/Backend/Cloud STT 30pts,
+  Concurrency 30pts, Frontend 20pts, Code Quality/Comments/Tests 20pts
+- API key handling is a hard fail condition if violated: rubric explicitly caps score at
+  Fail tier if the OPENAI_API_KEY is ever logged, printed, persisted, or leaked to the client
 
 ---
 
-*Last updated: 2026-09-02*
+*Last updated: 2026-09-04*
