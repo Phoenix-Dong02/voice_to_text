@@ -1,3 +1,4 @@
+```markdown
 # DEVLOG — voice_to_text (COMP3011 Assignment 1)
 
 Purpose: track key progress, issues encountered, and current status.
@@ -22,9 +23,11 @@ Purpose: track key progress, issues encountered, and current status.
 Development was supported by conversations with Claude (Anthropic) for
 concept explanation, code review, and Socratic-style debugging guidance
 (e.g. clarifying why MediaRecorder.stop() doesn't stop the underlying
-stream, reviewing FormData design tradeoffs). All code was written and
-debugged independently; Claude was used as a tutor, not as a code
-generator. See commit history for incremental, independent progress.
+stream, reviewing FormData design tradeoffs, understanding Spring's
+component scanning/bean lifecycle, and the mechanics of outbound
+multipart requests via RestClient). All code was written and debugged
+independently; Claude was used as a tutor, not as a code generator.
+See commit history for incremental, independent progress.
 
 ---
 
@@ -32,9 +35,10 @@ generator. See commit history for incremental, independent progress.
 
 **Symptom**: Running via STS Boot Dashboard, right-click Run As → Spring Boot App, `mvnw.cmd spring-boot:run`, or `mvn spring-boot:run` (standalone Maven) all fail with the same error:
 
+```
 NoClassDefFoundError: org/springframework/boot/SpringApplication
 Caused by: ClassNotFoundException: org.springframework.boot.SpringApplication
-
+```
 
 **Causes investigated and ruled out**:
 - ❌ Chinese username in the file path (moved to a plain-ASCII D: drive path — issue persisted)
@@ -52,6 +56,21 @@ java -jar target\voice_to_text-0.0.1-SNAPSHOT.jar
 ```
 
 This starts successfully with Tomcat listening on port 8080. Conveniently, **this is also exactly the format TITAN expects** (a Fat/Uber JAR), so this workflow will be used for the rest of development rather than chasing the STS/mvnw bug further.
+
+---
+
+## Local environment variable setup (OPENAI_API_KEY)
+
+Created a personal OpenAI API key at platform.openai.com (billing configured,
+$5 pay-as-you-go with auto-reload) for **local testing only**. This is
+separate from the key TITAN already provides via its own OS environment —
+this local key exists purely so `/api/v1/transcribe` can be tested against
+the real OpenAI API before deployment.
+
+`set OPENAI_API_KEY=...` in cmd is **not persistent** — it only applies to
+the current cmd session. Must be re-run every time a new terminal window is
+opened before `java -jar ...`. Worth revisiting later whether STS Run
+Configuration environment variables offer a more permanent local setup.
 
 ---
 
@@ -84,21 +103,40 @@ This starts successfully with Tomcat listening on port 8080. Conveniently, **thi
       return until upload + transcription display fully completes
 - [x] Frontend: display transcription result in `result` div
 - [x] Located assignment YAML spec + official grading rubric (course site, 2026-09-04)
+- [x] Backend: `TranscribeController` with `@PostMapping("/api/v1/transcribe")`,
+  accepting `@RequestParam("audio") MultipartFile audio` — confirmed end-to-end
+  with frontend, logs original filename + size to console to verify receipt
+- [x] Backend: call OpenAI `/v1/audio/transcriptions` (model `gpt-4o-mini-transcribe`) —
+  **tested working end-to-end with real API, returns actual transcribed speech**
+  - `OPENAI_API_KEY` read via `System.getenv(...)`; only presence (non-null) is
+    logged to console, never the key value itself (hard requirement per rubric —
+    logging/printing the key caps the whole category at Fail regardless of
+    everything else working)
+  - Incoming `MultipartFile` cannot be re-sent as-is (it's a receive-only Spring
+    wrapper); rewrapped its bytes in an anonymous `ByteArrayResource` subclass
+    overriding `getFilename()`, since OpenAI's multipart parser also requires a
+    filename on the file part
+  - Request body built as `MultiValueMap<String, Object>` (not `Map`) because
+    `RestClient` only knows how to serialize multipart bodies from that type —
+    not because this endpoint currently needs multiple values per key
+  - `RestClient` call is currently **fully blocking** (`.retrieve().body(...)`
+    parks the thread until OpenAI responds) — this is expected and fine for a
+    single request, but is the direct reason the concurrency requirement (200+
+    simultaneous blocking requests) needs deliberate handling next, not an
+    afterthought
 - [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
   the next recording without a manual refresh
-- [ ] Backend: endpoint to receive uploaded audio
-- [ ] Backend: call OpenAI `/v1/audio/transcriptions` (API key from `OPENAI_API_KEY` env var — must never leak to frontend/logs)
 - [ ] Backend: `GET /api/v1/admin/uptime` — return server start time, current time, uptime in seconds
 - [ ] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return 202, handle 409 if already shutting down
 - [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token counts since server start
-- [ ] Concurrency testing: must handle 200+ concurrent requests
+- [ ] Concurrency testing: must handle 200+ concurrent requests without significant delay or crashing
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
 
-**Immediate next step**: Write a Spring Boot `@RestController` with a
-`@PostMapping("/api/v1/transcribe")` endpoint that accepts a `MultipartFile`
-(bound via `@RequestParam("audio")`) — this is currently missing, so the
-frontend's fetch call will fail until this exists.
+**Immediate next step**: Verify concurrency behaviour of the blocking
+`RestClient` call under load (e.g. with `ab` or `wrk` at 200+ simultaneous
+requests) before building out the remaining admin/stats endpoints — this is
+the single biggest unverified risk area and worth 30/100 points on its own.
 
 ---
 
@@ -124,4 +162,5 @@ frontend's fetch call will fail until this exists.
 
 ---
 
-*Last updated: 2026-09-04*
+*Last updated: 2026-09-07*
+```
