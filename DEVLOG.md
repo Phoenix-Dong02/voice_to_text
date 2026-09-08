@@ -1,4 +1,3 @@
-```markdown
 # DEVLOG — voice_to_text (COMP3011 Assignment 1)
 
 Purpose: track key progress, issues encountered, and current status.
@@ -9,7 +8,7 @@ Purpose: track key progress, issues encountered, and current status.
 - **GitHub repo**: `https://github.com/Phoenix-Dong02/voice_to_text.git`
 - **Local path**: `D:\devworkspace\voice_to_text` (do **not** use the old copy under the C: drive Chinese-username directory — that one is deprecated)
 - **IDE**: Spring Tool Suite (STS), workspace `javaworkspace`
-- **JDK path**: `D:\JDK`
+- **JDK path**: `D:\JDK21install\jdk-21.0.12.1+1` (was `D:\JDK` / JDK 17, upgraded for virtual threads — see JDK Upgrade section below)
 - **Standalone Maven**: installed at `D:\maven\apache-maven-3.9.16`; `MAVEN_HOME` and `Path` environment variables configured
 - **Package structure**: `comp3011.voice_to_text`
 - **Main class**: `comp3011.voice_to_text.VoiceToTextApplication`
@@ -24,8 +23,9 @@ Development was supported by conversations with Claude (Anthropic) for
 concept explanation, code review, and Socratic-style debugging guidance
 (e.g. clarifying why MediaRecorder.stop() doesn't stop the underlying
 stream, reviewing FormData design tradeoffs, understanding Spring's
-component scanning/bean lifecycle, and the mechanics of outbound
-multipart requests via RestClient). All code was written and debugged
+component scanning/bean lifecycle, the mechanics of outbound multipart
+requests via RestClient, and the JDK 21 virtual-thread upgrade and
+concurrency verification methodology). All code was written and debugged
 independently; Claude was used as a tutor, not as a code generator.
 See commit history for incremental, independent progress.
 
@@ -57,6 +57,12 @@ java -jar target\voice_to_text-0.0.1-SNAPSHOT.jar
 
 This starts successfully with Tomcat listening on port 8080. Conveniently, **this is also exactly the format TITAN expects** (a Fat/Uber JAR), so this workflow will be used for the rest of development rather than chasing the STS/mvnw bug further.
 
+Note: STS's own JRE binding for this project (visible in Package Explorer)
+still shows `JavaSE-17` even after the JDK 21 upgrade below — since the
+command-line `mvn`/`java -jar` workflow above is already the established
+way this project is run and packaged, this has not been fixed yet. Low
+priority; only matters if STS's own green "Run" button is used instead.
+
 ---
 
 ## Local environment variable setup (OPENAI_API_KEY)
@@ -71,6 +77,96 @@ the real OpenAI API before deployment.
 the current cmd session. Must be re-run every time a new terminal window is
 opened before `java -jar ...`. Worth revisiting later whether STS Run
 Configuration environment variables offer a more permanent local setup.
+
+---
+
+## JDK Upgrade: 17 → 21 (for Virtual Threads)
+
+**Reason**: Java's built-in virtual threads (GA since JDK 21) let Tomcat handle
+each blocking HTTP request on a lightweight virtual thread instead of a scarce
+platform/OS thread. When the blocking `RestClient` call to OpenAI parks waiting
+for a response, the JVM automatically unmounts the virtual thread from its
+carrier OS thread, freeing that OS thread to serve other requests — solving
+the concurrency requirement without rewriting the Controller into reactive/
+WebClient style.
+
+**Pre-check**: confirmed TITAN's runtime is OpenJDK 26 (visible in TITAN's
+Job Details console output for a prior submission) — well above 21, so
+upgrading locally carries no deployment risk (JVM bytecode compiled at a
+lower class-file version always runs on a newer JVM, never the reverse).
+
+**Installation issues encountered** (documented in case they recur):
+- GUI `.msi` installer silently failed twice (UAC/permission-related,
+  root cause not fully confirmed) — target directory was created but left
+  empty, `JAVA_HOME`/`Path` never actually updated despite the installer's
+  checkboxes being ticked
+- `msiexec` command-line install (`/qb`, various `ADDLOCAL` feature-name
+  guesses, then `ADDLOCAL=ALL`) also failed with exit code 1 across multiple
+  attempts; MSI verbose log (`/l*v`) confirmed genuine install failure via
+  rollback, not a misconfigured parameter
+- **Resolution**: abandoned the `.msi` installer entirely. Downloaded the
+  Temurin 21 **ZIP** distribution instead, extracted manually to
+  `D:\JDK21install\jdk-21.0.12.1+1`, and pointed `JAVA_HOME` at that path by
+  hand (same manual method already used for JDK 17) — completely sidesteps
+  whatever the installer's permission/rollback issue was
+- Old `D:\JDK` (JDK 17) left untouched on disk, just no longer referenced by
+  `JAVA_HOME` — kept as a fallback in case anything else on the machine
+  still depends on 17
+
+**Updated environment**:
+- `JAVA_HOME` → `D:\JDK21install\jdk-21.0.12.1+1`
+- `pom.xml`: `<java.version>` changed from `17` to `21`
+- Verified via fresh cmd window: `java -version` / `javac -version` both
+  report `21.0.12.1`
+
+---
+
+## Concurrency Verification (Virtual Threads + Load Test)
+
+**Enabled** via one line in `application.properties`:
+```
+spring.threads.virtual.enabled=true
+```
+
+**Verified virtual threads were actually active, two independent ways**
+(config silently doing nothing was a real risk — Spring Boot does not
+error on a misspelled/ineffective property):
+1. Temporary debug line in `TranscribeController`:
+   `System.out.println("Current thread is virtual: " + Thread.currentThread().isVirtual());`
+   → printed `true` for a real request. **Removed before final submission**
+   (see Code Quality TODO below).
+2. Independent confirmation from a real exception's stack trace during load
+   testing, which showed `at java.base/java.lang.VirtualThread.run(...)` at
+   the bottom of the call stack — JVM-generated evidence, not something we
+   printed ourselves.
+
+**Load test methodology**: wrote a standalone Python script
+(`concurrency_test.py`, kept outside this repo — see note below) using
+`concurrent.futures.ThreadPoolExecutor` to fire N real concurrent multipart
+POST requests at `/api/v1/transcribe`, each carrying a real short `.m4a`
+audio file, recording per-request latency and status code.
+
+**Results at N=200**:
+- 200/200 requests succeeded (`200 OK`)
+- Total wall-clock time: 5.91s; average per-request latency: 3.26s
+- 199/200 requests completed within 5s; **one outlier at 5.83s**
+- Judged the single outlier as normal latency variance in OpenAI's own API
+  response time (outside this application's control), not a sign of a
+  concurrency/architecture problem — reasoning: a real thread-starvation or
+  resource-exhaustion issue would be expected to affect a *cluster* of
+  requests together, not exactly one isolated case, and the outlier request
+  still succeeded rather than timing out or erroring
+- Distinguished (conceptually, not hit in this run) that a `429` status
+  would indicate OpenAI-side rate limiting — a separate concern from this
+  application's own concurrency handling — versus `500`, which would point
+  to a genuine server-side bug
+
+**Note on `concurrency_test.py`**: this script is a personal testing tool,
+not part of the graded deliverable — it hardcodes a local Windows file path
+(with a personal WeChat file-transfer folder) and prints status messages in
+Chinese. Deliberately **not committed to this repo**; screenshots of the
+test run are kept as evidence instead, and this section documents the
+methodology in place of the script itself.
 
 ---
 
@@ -102,7 +198,6 @@ Configuration environment variables offer a more permanent local setup.
       ensuring mic release happens before upload starts, and the function doesn't
       return until upload + transcription display fully completes
 - [x] Frontend: display transcription result in `result` div
-- [x] Located assignment YAML spec + official grading rubric (course site, 2026-09-04)
 - [x] Backend: `TranscribeController` with `@PostMapping("/api/v1/transcribe")`,
   accepting `@RequestParam("audio") MultipartFile audio` — confirmed end-to-end
   with frontend, logs original filename + size to console to verify receipt
@@ -119,24 +214,32 @@ Configuration environment variables offer a more permanent local setup.
   - Request body built as `MultiValueMap<String, Object>` (not `Map`) because
     `RestClient` only knows how to serialize multipart bodies from that type —
     not because this endpoint currently needs multiple values per key
-  - `RestClient` call is currently **fully blocking** (`.retrieve().body(...)`
-    parks the thread until OpenAI responds) — this is expected and fine for a
-    single request, but is the direct reason the concurrency requirement (200+
-    simultaneous blocking requests) needs deliberate handling next, not an
-    afterthought
+  - `RestClient` call is **fully blocking** (`.retrieve().body(...)` parks the
+    thread until OpenAI responds) — resolved via JDK 21 virtual threads rather
+    than rewriting to WebClient (see JDK Upgrade + Concurrency Verification
+    sections)
+- [x] JDK upgraded 17 → 21, `spring.threads.virtual.enabled=true` set
+- [x] Concurrency testing: 200 concurrent requests, 200/200 succeeded, 199/200
+  completed within 5s (see Concurrency Verification section for full
+  methodology and the one 5.83s outlier)
 - [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
   the next recording without a manual refresh
 - [ ] Backend: `GET /api/v1/admin/uptime` — return server start time, current time, uptime in seconds
 - [ ] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return 202, handle 409 if already shutting down
 - [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token counts since server start
-- [ ] Concurrency testing: must handle 200+ concurrent requests without significant delay or crashing
+- [ ] Code Quality: remove temporary debug `System.out.println` statements added
+  during virtual-thread verification and Multipart debugging (`isVirtual()`,
+  `getOriginalFilename()`, `getSize()`) before final submission
+- [ ] Code Quality: add proper `try-catch` around the OpenAI call / audio
+  processing so `IOException` and OpenAI API errors return a meaningful JSON
+  error response instead of a bare 500 with no information
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
 
-**Immediate next step**: Verify concurrency behaviour of the blocking
-`RestClient` call under load (e.g. with `ab` or `wrk` at 200+ simultaneous
-requests) before building out the remaining admin/stats endpoints — this is
-the single biggest unverified risk area and worth 30/100 points on its own.
+**Immediate next step**: Implement the three admin/stats endpoints
+(`/api/v1/admin/uptime`, `/api/v1/admin/shutdown`, `/api/v1/global/stats`)
+per the YAML spec — concurrency risk is now verified and de-risked, so this
+is the next largest unstarted chunk of backend work.
 
 ---
 
@@ -162,5 +265,6 @@ the single biggest unverified risk area and worth 30/100 points on its own.
 
 ---
 
-*Last updated: 2026-09-07*
+*Last updated: 2026-09-08*
 ```
+

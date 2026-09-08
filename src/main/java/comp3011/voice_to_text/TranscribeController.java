@@ -20,10 +20,12 @@ public class TranscribeController {
 
     private static final String OPENAI_URL = "https://api.openai.com/v1/audio/transcriptions";
     private static final String MODEL = "gpt-4o-mini-transcribe";
-
+    
+    
     @PostMapping("/api/v1/transcribe")
     public Map<String, String> transcribe(@RequestParam("audio") MultipartFile audio) throws IOException {
-
+    	
+    	System.out.println("Current thread is virtual: " + Thread.currentThread().isVirtual());
         System.out.println(audio.getOriginalFilename());
         System.out.println(audio.getSize());
 
