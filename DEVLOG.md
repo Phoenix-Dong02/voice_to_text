@@ -1,3 +1,4 @@
+```markdown
 # DEVLOG — voice_to_text (COMP3011 Assignment 1)
 
 Purpose: track key progress, issues encountered, and current status.
@@ -222,24 +223,71 @@ methodology in place of the script itself.
 - [x] Concurrency testing: 200 concurrent requests, 200/200 succeeded, 199/200
   completed within 5s (see Concurrency Verification section for full
   methodology and the one 5.83s outlier)
+- [x] Backend: `GET /api/v1/admin/uptime` — returns server start time, current
+  time, uptime in seconds
+  - Reads the JVM process start time directly via
+    `ManagementFactory.getRuntimeMXBean().getStartTime()` rather than tracking
+    a separate field — this timestamp already exists at the JVM level from the
+    moment `java -jar` is invoked, so no additional state needs to be introduced
+    or kept in sync
+  - `currentTime` and `uptimeSeconds` are both derived from a single shared
+    `Instant.now()` call, so the two fields are guaranteed to describe the same
+    instant rather than two slightly different `now()` calls a few nanoseconds
+    apart
+- [x] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return
+  202, handle 409 if already shutting down
+  - Idempotency guarded with `AtomicBoolean.compareAndSet(false, true)` rather
+    than `synchronized` — a contended `synchronized` block risks pinning a
+    virtual thread to its carrier OS thread, which would undermine the
+    concurrency approach already established for `/api/v1/transcribe`
+  - The actual `context.close()` call is deliberately deferred to a separately
+    spawned thread (after a short `Thread.sleep`) rather than called inline
+    before `return` — code after a `return` statement never executes, so
+    closing the context synchronously risked tearing down Tomcat before the
+    HTTP response for *this* request had actually been written back to the
+    client
+  - **Verified with two independent forms of evidence**:
+    1. Standalone Python script (`test_shutdown.py`, same
+       `ThreadPoolExecutor` pattern as the concurrency test, not committed to
+       this repo) firing two concurrent `POST` requests at `/shutdown` —
+       confirmed exactly one `202` and one `409` response, never both-202 or
+       both-409
+    2. Server console log at shutdown time shows
+       `[Thread-1] ... GracefulShutdown : Commencing graceful shutdown` — the
+       thread name confirms the close was triggered from the separately
+       spawned thread, not the original request-handling thread
+- [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token
+  counts since server start
+  - **Data source confirmed**: `gpt-4o-mini-transcribe` only supports
+    `response_format=json` (per OpenAI's API reference), so every
+    transcription response already includes a `usage` object alongside
+    `text` (`total_tokens`, `input_tokens`, `output_tokens`) — verified
+    against a real transcription response via a temporary debug print
+    (to be removed with other debug output before submission)
+  - Not yet implemented: still need a shared `AtomicLong` counter (guarded
+    via CAS, same reasoning as the shutdown flag above) exposed to both
+    `TranscribeController` (writer) and a new `GlobalStatsController`
+    (reader) through a shared `@Component` service — the two controllers
+    are separate classes and can't otherwise see the same field
 - [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
   the next recording without a manual refresh
-- [ ] Backend: `GET /api/v1/admin/uptime` — return server start time, current time, uptime in seconds
-- [ ] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return 202, handle 409 if already shutting down
-- [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token counts since server start
 - [ ] Code Quality: remove temporary debug `System.out.println` statements added
-  during virtual-thread verification and Multipart debugging (`isVirtual()`,
-  `getOriginalFilename()`, `getSize()`) before final submission
+  during virtual-thread verification, Multipart debugging, and OpenAI `usage`
+  field verification (`isVirtual()`, `getOriginalFilename()`, `getSize()`,
+  raw response dump) before final submission
 - [ ] Code Quality: add proper `try-catch` around the OpenAI call / audio
   processing so `IOException` and OpenAI API errors return a meaningful JSON
   error response instead of a bare 500 with no information
 - [ ] Package as Fat JAR, test on TITAN
 - [ ] Final submission: GitHub link to Gradescope
 
-**Immediate next step**: Implement the three admin/stats endpoints
-(`/api/v1/admin/uptime`, `/api/v1/admin/shutdown`, `/api/v1/global/stats`)
-per the YAML spec — concurrency risk is now verified and de-risked, so this
-is the next largest unstarted chunk of backend work.
+**Immediate next step**: Implement `GET /api/v1/global/stats` — design a
+shared `UsageStatsService` (`@Component`, single `AtomicLong` field) injected
+into both `TranscribeController` (to accumulate `total_tokens` on every
+transcription) and a new `GlobalStatsController` (to read the cumulative
+value back out). `uptime` and `shutdown` are both complete and verified as of
+2026-09-09; this is the last of the three admin/stats endpoints before moving
+on to the remaining Frontend and Code Quality items.
 
 ---
 
@@ -265,6 +313,5 @@ is the next largest unstarted chunk of backend work.
 
 ---
 
-*Last updated: 2026-09-08*
+*Last updated: 2026-09-09*
 ```
-

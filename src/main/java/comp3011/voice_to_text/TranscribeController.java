@@ -39,7 +39,7 @@ public class TranscribeController {
         	
         }
         // because multipartfile can not be sent
-        // so i need to changge it to the file to be sent
+        // so i need to change it to the file to be sent
         // why use ByteArrayResource not byte[]
         // because openai requires filename and byte[] only stores bytes
         ByteArrayResource fileResource = new ByteArrayResource(audio.getBytes()) {
@@ -65,7 +65,9 @@ public class TranscribeController {
         		.body(body)
         		.retrieve()
         		.body(Map.class);
-
+        System.out.println("OpenAI raw response keys: " + response.keySet());
+        System.out.println("Full response: " + response);
+        
         // return to frontend
         Map<String, String> result = new HashMap<>();
         result.put("text", (String)response.get("text"));
