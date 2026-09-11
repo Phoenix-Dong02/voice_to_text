@@ -32,17 +32,20 @@ public class AdminController {
     @GetMapping("/uptime")
     public Map<String, Object> uptime() {
 
-        long time = ManagementFactory.getRuntimeMXBean().getStartTime();
-        Instant startTime = Instant.ofEpochMilli(time);
+    	long time = ManagementFactory.getRuntimeMXBean().getStartTime();// records the number of milliseconds since 1970
+    	Instant startTime = Instant.ofEpochMilli(time);// changes type to instant type in order to calculate the time duration
+    	Instant now = Instant.now();
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("startTime", startTime);
-        Instant now = Instant.now();
-        response.put("currentTime", now);
-        // duration accepts instant type only
-        response.put("uptimeSeconds", Duration.between(startTime, now).getSeconds());
+    	// getSeconds() only returns the integer part and discards the decimal
+    	// converting to milliseconds and dividing by 1000.0 preserves the decimal precision
+    	double uptimeSeconds = Duration.between(startTime, now).toMillis() / 1000.0;
 
-        return response;
+    	Map<String, Object> response = new HashMap<>();
+    	response.put("utcServerStart", startTime);
+    	response.put("utcNow", now);
+    	response.put("serverUptimeSeconds", uptimeSeconds);
+
+    	return response;
     }
 
     @PostMapping("/shutdown")
@@ -53,7 +56,7 @@ public class AdminController {
     	if(shutDown) {
     		// spawn a new thread to close the context
     		// because once this method returns, no code after the return statement can execute
-    		// if context.close() ran before the return, the response might neverbe sent
+    		// if context.close() ran before the return, the response might never be sent
     		
     		new Thread(()->{
     			try{

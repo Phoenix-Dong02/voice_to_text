@@ -1,4 +1,4 @@
-```markdown
+
 # DEVLOG — voice_to_text (COMP3011 Assignment 1)
 
 Purpose: track key progress, issues encountered, and current status.
@@ -25,10 +25,11 @@ concept explanation, code review, and Socratic-style debugging guidance
 (e.g. clarifying why MediaRecorder.stop() doesn't stop the underlying
 stream, reviewing FormData design tradeoffs, understanding Spring's
 component scanning/bean lifecycle, the mechanics of outbound multipart
-requests via RestClient, and the JDK 21 virtual-thread upgrade and
-concurrency verification methodology). All code was written and debugged
-independently; Claude was used as a tutor, not as a code generator.
-See commit history for incremental, independent progress.
+requests via RestClient, the JDK 21 virtual-thread upgrade and
+concurrency verification methodology, and dependency injection semantics
+when introducing the shared `UsageStatsService`). All code was written
+and debugged independently; Claude was used as a tutor, not as a code
+generator. See commit history for incremental, independent progress.
 
 ---
 
@@ -135,7 +136,7 @@ error on a misspelled/ineffective property):
 1. Temporary debug line in `TranscribeController`:
    `System.out.println("Current thread is virtual: " + Thread.currentThread().isVirtual());`
    → printed `true` for a real request. **Removed before final submission**
-   (see Code Quality TODO below).
+   (see Code Quality section below — completed).
 2. Independent confirmation from a real exception's stack trace during load
    testing, which showed `at java.base/java.lang.VirtualThread.run(...)` at
    the bottom of the call stack — JVM-generated evidence, not something we
@@ -171,6 +172,86 @@ methodology in place of the script itself.
 
 ---
 
+## API Specification Alignment (assignment1api.yaml)
+
+TITAN's automated feedback (`ERROR: Response does not contain 'serverUptimeSeconds'`
+and a generic "expected field" error on `/api/v1/global/stats`) surfaced that the
+prose description of these endpoints was not enough — TITAN's grading harness
+checks response JSON against the exact OpenAPI schema published in
+`assignment1api.yaml`, field name for field name (`additionalProperties: false`
+in the schema means no extra/renamed fields are tolerated).
+
+**`GET /api/v1/admin/uptime` — field names and precision fixed**:
+- Renamed fields to match the spec exactly: `startTime` → `utcServerStart`,
+  `currentTime` → `utcNow`, `uptimeSeconds` → `serverUptimeSeconds`
+- `serverUptimeSeconds` is spec'd as `type: number, format: double` (example
+  value `9000.5`), but the original implementation used
+  `Duration.between(...).getSeconds()`, which only returns a truncated
+  integer. Switched to `Duration.between(startTime, now).toMillis() / 1000.0`
+  — dividing by a `double` literal promotes the whole expression to
+  floating-point, preserving the decimal precision the spec requires
+
+**`GET /api/v1/global/stats` — redesigned from a single counter to two**:
+- The spec requires two separate fields, `inputTokens` and `outputTokens`
+  (both `type: integer, format: int64`), not a single combined total
+- `UsageStatsService` changed from one `AtomicLong` (`totalTokens`) to two
+  independent `AtomicLong` fields (`inputTokenCounter`, `outputTokenCounter`),
+  each still guarded by `addAndGet` — same CAS-based thread-safety reasoning
+  as before, just duplicated across two fields instead of one
+- `TranscribeController` now reads `input_tokens` and `output_tokens`
+  separately from OpenAI's `usage` object (previously only read
+  `total_tokens`) and calls `usageStatsService.addTokens(inputTokens,
+  outputTokens)` with both values
+- Field type is `long` (`int64` per spec), not `double` — token counts are
+  an inherently discrete quantity (never fractional), so `double` would be
+  the wrong semantic type even though it happens to have more numeric range
+
+**Verification**: after these changes, a full TITAN hand-in reported
+**11/11 features successfully implemented**, including all four
+previously-failing checks (T01/T02/T09/T10 — first and last calls to both
+`/api/v1/admin/uptime` and `/api/v1/global/stats`).
+
+---
+
+## Error Handling (try-catch)
+
+Added structured error handling to `TranscribeController#transcribe`,
+replacing the previous behaviour where any failure (bad upload, OpenAI
+outage, unexpected response shape) produced an unhandled exception and a
+bare, uninformative `500`.
+
+**Design**: three sequential `try/catch` blocks, one per failure-prone step,
+each returning a distinct HTTP status so the failure mode is identifiable
+from the response alone:
+1. `audio.getBytes()` → `catch (IOException e)` → `400 BAD_REQUEST`. This is
+   the one step with a single, compiler-enforced checked exception, so it is
+   caught precisely rather than broadly.
+2. The `RestClient` call to OpenAI → `catch (Exception e)` → `502
+   BAD_GATEWAY`. Caught broadly because failures here (network issues,
+   timeouts, non-2xx OpenAI responses) are varied and mostly unchecked;
+   all are treated as "the upstream service is unavailable" from this
+   application's perspective.
+3. Parsing the OpenAI response (`usage`/`text` extraction, type casting) →
+   `catch (Exception e)` → `500 INTERNAL_SERVER_ERROR`. Also caught broadly,
+   since a missing key or unexpected type can fail in multiple ways
+   (`NullPointerException`, `ClassCastException`) that are all equally
+   "this application misread the response shape".
+
+**Mechanics**: the method's return type changed from `Map<String, String>`
+to `ResponseEntity<Map<String, String>>` — a plain `Map` return has no way
+to carry a status code, and Spring would otherwise always default to `200`
+regardless of which branch actually ran. A small `errorBody(String message)`
+helper standardises all error responses to the same shape,
+`{"error": "<message>"}`, so the frontend can handle failures from any of
+the three branches with one code path.
+
+**Verified**: deliberately set an invalid `OPENAI_API_KEY` and confirmed via
+browser DevTools that `/api/v1/transcribe` returned `502` with the expected
+JSON body, and that the server itself did not crash — recording, page state,
+and subsequent requests continued to work normally afterward.
+
+---
+
 ## Current Progress
 
 - [x] GitHub repo created, push/pull working
@@ -199,15 +280,19 @@ methodology in place of the script itself.
       ensuring mic release happens before upload starts, and the function doesn't
       return until upload + transcription display fully completes
 - [x] Frontend: display transcription result in `result` div
+- [x] Frontend: auto-reset UI — verified the page returns to a state ready for a
+  new recording (start/end button toggling, status text cycling wait → recording
+  → stopped) across consecutive recordings **without a manual page refresh**;
+  no additional reset code was needed, existing state-handling logic already
+  satisfied this requirement
 - [x] Backend: `TranscribeController` with `@PostMapping("/api/v1/transcribe")`,
   accepting `@RequestParam("audio") MultipartFile audio` — confirmed end-to-end
-  with frontend, logs original filename + size to console to verify receipt
+  with frontend
 - [x] Backend: call OpenAI `/v1/audio/transcriptions` (model `gpt-4o-mini-transcribe`) —
   **tested working end-to-end with real API, returns actual transcribed speech**
-  - `OPENAI_API_KEY` read via `System.getenv(...)`; only presence (non-null) is
-    logged to console, never the key value itself (hard requirement per rubric —
-    logging/printing the key caps the whole category at Fail regardless of
-    everything else working)
+  - `OPENAI_API_KEY` read via `System.getenv(...)`; never logged or printed
+    (hard requirement per rubric — logging/printing the key caps the whole
+    category at Fail regardless of everything else working)
   - Incoming `MultipartFile` cannot be re-sent as-is (it's a receive-only Spring
     wrapper); rewrapped its bytes in an anonymous `ByteArrayResource` subclass
     overriding `getFilename()`, since OpenAI's multipart parser also requires a
@@ -223,17 +308,14 @@ methodology in place of the script itself.
 - [x] Concurrency testing: 200 concurrent requests, 200/200 succeeded, 199/200
   completed within 5s (see Concurrency Verification section for full
   methodology and the one 5.83s outlier)
-- [x] Backend: `GET /api/v1/admin/uptime` — returns server start time, current
-  time, uptime in seconds
+- [x] Backend: `GET /api/v1/admin/uptime` — returns `utcServerStart`, `utcNow`,
+  `serverUptimeSeconds` (field names and decimal precision aligned to
+  `assignment1api.yaml` — see API Specification Alignment section)
   - Reads the JVM process start time directly via
     `ManagementFactory.getRuntimeMXBean().getStartTime()` rather than tracking
     a separate field — this timestamp already exists at the JVM level from the
     moment `java -jar` is invoked, so no additional state needs to be introduced
     or kept in sync
-  - `currentTime` and `uptimeSeconds` are both derived from a single shared
-    `Instant.now()` call, so the two fields are guaranteed to describe the same
-    instant rather than two slightly different `now()` calls a few nanoseconds
-    apart
 - [x] Backend: `POST /api/v1/admin/shutdown` — accept shutdown request, return
   202, handle 409 if already shutting down
   - Idempotency guarded with `AtomicBoolean.compareAndSet(false, true)` rather
@@ -256,38 +338,25 @@ methodology in place of the script itself.
        `[Thread-1] ... GracefulShutdown : Commencing graceful shutdown` — the
        thread name confirms the close was triggered from the separately
        spawned thread, not the original request-handling thread
-- [ ] Backend: `GET /api/v1/global/stats` — cumulative input/output token
-  counts since server start
-  - **Data source confirmed**: `gpt-4o-mini-transcribe` only supports
-    `response_format=json` (per OpenAI's API reference), so every
-    transcription response already includes a `usage` object alongside
-    `text` (`total_tokens`, `input_tokens`, `output_tokens`) — verified
-    against a real transcription response via a temporary debug print
-    (to be removed with other debug output before submission)
-  - Not yet implemented: still need a shared `AtomicLong` counter (guarded
-    via CAS, same reasoning as the shutdown flag above) exposed to both
-    `TranscribeController` (writer) and a new `GlobalStatsController`
-    (reader) through a shared `@Component` service — the two controllers
-    are separate classes and can't otherwise see the same field
-- [ ] Frontend: auto-reset UI (recordBtn/status text) so the page is ready for
-  the next recording without a manual refresh
-- [ ] Code Quality: remove temporary debug `System.out.println` statements added
-  during virtual-thread verification, Multipart debugging, and OpenAI `usage`
-  field verification (`isVirtual()`, `getOriginalFilename()`, `getSize()`,
-  raw response dump) before final submission
-- [ ] Code Quality: add proper `try-catch` around the OpenAI call / audio
-  processing so `IOException` and OpenAI API errors return a meaningful JSON
-  error response instead of a bare 500 with no information
-- [ ] Package as Fat JAR, test on TITAN
-- [ ] Final submission: GitHub link to Gradescope
+- [x] Backend: `GET /api/v1/global/stats` — cumulative `inputTokens` /
+  `outputTokens` since server start, via a shared `UsageStatsService`
+  (`@Component`, two `AtomicLong` fields) constructor-injected into both
+  `TranscribeController` (writer) and `GlobalStatsController` (reader) — see
+  API Specification Alignment section for the redesign from a single combined
+  counter to two separate ones
+- [x] Code Quality: removed all temporary debug `System.out.println`
+  statements added during virtual-thread verification, Multipart debugging,
+  and OpenAI response inspection (`isVirtual()`, `getOriginalFilename()`,
+  `getSize()`, raw response dump, API-key presence check) — verified the app
+  still behaves identically after removal (record → transcribe → display,
+  and `/api/v1/global/stats` counter increments, both re-tested)
+- [x] Code Quality: added structured `try-catch` error handling around audio
+  reading, the OpenAI call, and response parsing — see Error Handling section
+- [x] Package as Fat JAR, test on TITAN — **11/11 features passing** as of
+  this hand-in (previously 7/11, before the API Specification Alignment fixes)
+- [ ] Final submission: push this round of changes to GitHub, then submit the
+  GitHub repository URL to Gradescope
 
-**Immediate next step**: Implement `GET /api/v1/global/stats` — design a
-shared `UsageStatsService` (`@Component`, single `AtomicLong` field) injected
-into both `TranscribeController` (to accumulate `total_tokens` on every
-transcription) and a new `GlobalStatsController` (to read the cumulative
-value back out). `uptime` and `shutdown` are both complete and verified as of
-2026-09-09; this is the last of the three admin/stats endpoints before moving
-on to the remaining Frontend and Code Quality items.
 
 ---
 
@@ -298,10 +367,13 @@ on to the remaining Frontend and Code Quality items.
 - API key must only be read from an environment variable on the backend — never logged, printed, or exposed to the frontend
 - Must handle 200+ concurrent blocking HTTP requests within a single Java process without blocking
 - Use Spring profiles/environment variables to switch between local and TITAN configs — not commented-out code
-- Due Sunday, September 13; worth 20% of final grade; requires at least one TITAN hand-in plus a final GitHub link submission via Gradescope
+- Due Sunday, September 13 (23:59); worth 20% of final grade; requires at least one TITAN hand-in plus a final GitHub link submission via Gradescope
 - Viva demonstration required — must be able to explain and defend every line of code written
 - Transcription model must be `gpt-4o-mini-transcribe` (not just "any" OpenAI STT model)
 - For recordings under 1 minute, transcription result must display within 5 seconds of stopping
+- Response bodies for `/api/v1/admin/uptime` and `/api/v1/global/stats` must match
+  `assignment1api.yaml` exactly (field names, types, and — for `serverUptimeSeconds`
+  — decimal precision), since TITAN's automated checks validate against this schema
 - **Concurrency is graded as its own 30/100-point rubric category (equal weight to backend correctness)**:
   must handle 200+ concurrent blocking HTTP requests within a single Java process without
   significant delay or crashing. This is not a stretch goal — it must be planned for before
@@ -313,5 +385,5 @@ on to the remaining Frontend and Code Quality items.
 
 ---
 
-*Last updated: 2026-09-09*
+*Last updated: 2026-09-11*
 ```
